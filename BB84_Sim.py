@@ -1,4 +1,4 @@
-# Полный исходный код симулятора BB84
+# Полный исходный код симулятора BB84 (устаревшая версия новая версия в интерфейсном решении)
 import numpy as np
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator  
