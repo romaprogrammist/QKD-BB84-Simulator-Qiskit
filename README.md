@@ -343,21 +343,22 @@ SKR = f_rep * P_click * 0.5 * max(0, 1 - 2*H2(QBER) - leak_EC) [бит/сек]
 ### Функция Privacy Amplification через Матрицы Тёплица
 
 ```python
-import hashlib
 import numpy as np
 
 # Исходный просеянный ключ (частично скомпрометирован Евой)
-sifted_key = np.array([0, 1, 0, 0, 1, 1, ...])
+sifted_key = np.array([0, 1, 0, 0, 1, 1, 0, 1])
 
-# Универсальное хэширование матрицей Тёплица
-# Генерируется случайная матрица m×n по алгоритму Hayashi-Tsurumaru
+# Расчет целевой длины m на основе QBER и утечки EC
+# m = floor(n * (1 - 2*H2(QBER) - leak_EC))
+target_length = 4 
+
+# Универсальное хэширование матрицей Тёплица (Hayashi & Tsurumaru, 2016)
 # compressed_key = Toeplitz_matrix · sifted_key (mod 2)
+toeplitz_matrix = generate_toeplitz_matrix(rows=target_length, cols=len(sifted_key))
+final_secret_key = np.dot(toeplitz_matrix, sifted_key) % 2
 
-# Финальное криптографическое усиление (SHA-256)
-final_key = hashlib.sha256(bytes(compressed_key)).hexdigest()
+# Результат: полностью секретный ключ, обладающий информационно-теоретической стойкостью
 
-# Результат: полностью секретный 256-битный ключ
-# (любое частичное знание Евы полностью нивелировано лавинным эффектом SHA-256)
 ```
 
 ### Граница Шора-Прескилла
