@@ -1,7 +1,7 @@
 # ==============================================================================
 # © 2025-2026 Максимов Роман Викторович. Все права защищены.
 #
-# Проект: QKD-BB84-Simulator-Qiskit (Версия v3.3)
+# Проект: QKD-BB84-Simulator-Qiskit (Версия v3.3fix)
 #
 # Данное программное обеспечение и его исходный код являются конфиденциальной
 # интеллектуальной собственностью автора. Допуск предоставлен исключительно 
@@ -19,49 +19,65 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import hashlib
 
+
 def calculate_fiber_transmission(distance_km, attenuation_db_per_km=0.2):
     """
-    Вычисляет коэффициента пропускания оптического волокна (Transmission T):
+    Вычисляет коэффициент пропускания оптического волокна (Transmission T):
     T = 10^(-alpha * L / 10)
     где alpha - затухание в дБ/км, L - длина линии связи в км.
     """
     return 10 ** (-(attenuation_db_per_km * distance_km) / 10.0)
 
 
-def calculate_physical_qber(distance_km, attenuation_db=0.2, det_efficiency=0.25, 
-                           dark_count_rate=1e-6, afterpulsing_prob=0.005, optics_error=0.015, mean_photon_num=0.1):
+def calculate_physical_qber(
+    distance_km,
+    attenuation_db=0.2,
+    det_efficiency=0.25,
+    dark_count_rate=1e-6,
+    afterpulsing_prob=0.005,
+    optics_error=0.015,
+    mean_photon_num=0.1,
+):
     """
     Расчет физического уровня ошибок QBER(phys) и соотношения сигнал/шум (SNR)
     согласно оптической модели линии связи и квантовым детекторам (SPAD/SNSPD):
     QBER(phys) = P_dark / (2 * (T * eta_det * mu + P_dark)) + Optics_Error
     """
     T = calculate_fiber_transmission(distance_km, attenuation_db)
-    
+
     # Эффективная вероятность темнового отсчета с учетом послеимпульсов (afterpulsing)
     p_dark_total = dark_count_rate + afterpulsing_prob * dark_count_rate
-    
+
     # Вероятность регистрации полезного сигнала на импульс
     p_signal = T * det_efficiency * mean_photon_num
-    
+
     # Полное суммарное знаменательное выражение регистрации
     total_detection_prob = p_signal + p_dark_total
-    
+
     if total_detection_prob <= 0:
         return 0.5, 0.0, 0.0
-    
+
     # Расчет физического QBER
     qber_phys = (p_dark_total / (2.0 * total_detection_prob)) + optics_error
     qber_phys = min(0.5, qber_phys)
-    
+
     # Соотношение сигнал/шум (SNR)
     snr = p_signal / p_dark_total if p_dark_total > 0 else 1e6
-    
+
     return qber_phys, snr, total_detection_prob
 
 
-def calculate_secret_key_rate(distance_km, repetition_rate_hz=1e8, attenuation_db=0.2, 
-                               det_efficiency=0.25, dark_count_rate=1e-6, afterpulsing_prob=0.005, 
-                               optics_error=0.015, mean_photon_num=0.1, ec_efficiency=1.16):
+def calculate_secret_key_rate(
+    distance_km,
+    repetition_rate_hz=1e8,
+    attenuation_db=0.2,
+    det_efficiency=0.25,
+    dark_count_rate=1e-6,
+    afterpulsing_prob=0.005,
+    optics_error=0.015,
+    mean_photon_num=0.1,
+    ec_efficiency=1.16,
+):
     """
     Расчет скорости генерации секретного ключа (Secret Key Rate - SKR) на основе:
     - Частоты повторения импульсов f
@@ -70,22 +86,27 @@ def calculate_secret_key_rate(distance_km, repetition_rate_hz=1e8, attenuation_d
     SKR = f * P_click * 0.5 * r_net
     """
     qber_phys, snr, p_click = calculate_physical_qber(
-        distance_km, attenuation_db, det_efficiency, dark_count_rate, 
-        afterpulsing_prob, optics_error, mean_photon_num
+        distance_km,
+        attenuation_db,
+        det_efficiency,
+        dark_count_rate,
+        afterpulsing_prob,
+        optics_error,
+        mean_photon_num,
     )
-    
+
     if qber_phys >= 0.11:  # Предел безопасности BB84
         return 0.0, qber_phys, snr, 0.0
-    
+
     # Двоичная энтропия Шеннона
     h2_qber = binary_entropy(qber_phys)
-    
+
     # Доля полезного ключа после коррекции ошибок (f_EC * H2) и усиления секретности (H2)
     net_key_fraction = max(0.0, 1.0 - (ec_efficiency + 1.0) * h2_qber)
-    
+
     # Скорость просеянного ключа (Sifted Key Rate) при p_sift = 0.5
     sifted_rate = repetition_rate_hz * p_click * 0.5
-    
+
     # Секретная скорость генерации ключа (бит/сек)
     skr = sifted_rate * net_key_fraction
     return skr, qber_phys, snr, net_key_fraction
@@ -153,7 +174,7 @@ def measure_qubits(qc_to_measure, bases):
         qc_copy.measure(i, i)
 
     try:
-        simulator = AerSimulator(method='matrix_product_state')
+        simulator = AerSimulator(method="matrix_product_state")
         job = simulator.run(qc_copy, shots=1)
         result = job.result().get_counts()
     except Exception:
@@ -195,10 +216,10 @@ def eavesdrop_on_qubits(qc_from_alice, num_qubits, attack_type="Стандарт
     elif attack_type == "Атака с квантовой памятью":
         combined_qc = QuantumCircuit(2 * num_qubits, 2 * num_qubits)
         combined_qc.compose(qc_from_alice, qubits=list(range(num_qubits)), clbits=list(range(num_qubits)), inplace=True)
-        
+
         for i in range(num_qubits):
             combined_qc.cx(i, num_qubits + i)
-            
+
         qc_to_bob = combined_qc
         eve_bases = np.zeros(num_qubits, dtype=int)
         eve_measured_bits = np.zeros(num_qubits, dtype=int)
@@ -228,7 +249,7 @@ def sift_key(alice_bits, alice_bases, bob_bits, bob_bases):
 def estimate_qber_and_sample(alice_sifted, bob_sifted, eve_sifted=None, sample_ratio=0.2):
     """
     После просеивания ключей выбирается случайный набор битов для оценки QBER.
-    Оценочные биты исключаются из финального рабочей ключа.
+    Оценочные биты исключаются из финального рабочего ключа.
     """
     sifted_len = len(alice_sifted)
     if sifted_len == 0:
@@ -262,7 +283,7 @@ def error_correction_ldpc_like(alice_key, bob_key, qber_est=0.0, manual_iteratio
     corrected_alice_key = alice_key.copy()
     corrected_bob_key = bob_key.copy()
     key_len = len(alice_key)
-    
+
     if key_len < 2:
         return corrected_alice_key, corrected_bob_key, 0, 0
 
@@ -288,16 +309,16 @@ def error_correction_ldpc_like(alice_key, bob_key, qber_est=0.0, manual_iteratio
             return
         mid = (lo + hi) // 2
         alice_parity_left = int(np.sum(corrected_alice_key[lo:mid]) % 2)
-        bob_parity_left   = int(np.sum(cur_bob_key[lo:mid]) % 2)
+        bob_parity_left = int(np.sum(cur_bob_key[lo:mid]) % 2)
         disclosed_parity_bits += 1
-        
+
         if alice_parity_left != bob_parity_left:
             bisect_and_correct(lo, mid, cur_bob_key)
         else:
             bisect_and_correct(mid, hi, cur_bob_key)
 
     np.random.seed(42)
-    
+
     for iter_idx in range(num_iterations):
         if iter_idx == 0:
             perm = np.arange(key_len)
@@ -311,10 +332,10 @@ def error_correction_ldpc_like(alice_key, bob_key, qber_est=0.0, manual_iteratio
         num_blocks = key_len // block_size
         for b in range(num_blocks):
             start = b * block_size
-            end   = start + block_size
+            end = start + block_size
 
             alice_parity = int(np.sum(perm_alice[start:end]) % 2)
-            bob_parity   = int(np.sum(perm_bob[start:end]) % 2)
+            bob_parity = int(np.sum(perm_bob[start:end]) % 2)
             disclosed_parity_bits += 1
 
             if alice_parity != bob_parity:
@@ -355,7 +376,7 @@ def toeplitz_hash(key_bits, target_length):
                 toeplitz_matrix[i, j] = row[j - i]
 
     compressed_key = np.dot(toeplitz_matrix, key_bits) % 2
-    hex_str = hashlib.sha256(compressed_key.tobytes()).hexdigest()[:min(64, max(8, m // 4))]
+    hex_str = hashlib.sha256(compressed_key.tobytes()).hexdigest()[: min(64, max(8, m // 4))]
     return compressed_key, hex_str
 
 
@@ -371,7 +392,7 @@ def privacy_amplification(key, qber_est=0.0, leaked_ec_bits=0, eve_info_fraction
     eavesdropper_info = max(h_qber, eve_info_fraction)
     fraction_secure = max(0.0, 1.0 - h_qber - eavesdropper_info)
     target_length = int(np.floor(n * fraction_secure - leaked_ec_bits))
-    
+
     if target_length < 4 or qber_est >= 0.11:
         target_length = 0
 
@@ -405,11 +426,16 @@ class QuantumApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
+        # Обработчик корректного закрытия окна
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
         # Боковая панель управления
         self.sidebar = ctk.CTkFrame(self, width=320, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
 
-        self.logo_label = ctk.CTkLabel(self.sidebar, text="QKD SYSTEM & PLANNER", font=ctk.CTkFont(size=18, weight="bold"))
+        self.logo_label = ctk.CTkLabel(
+            self.sidebar, text="QKD SYSTEM & PLANNER", font=ctk.CTkFont(size=18, weight="bold")
+        )
         self.logo_label.grid(row=0, column=0, padx=20, pady=(15, 10))
 
         # Переключатель режима работы приложения
@@ -417,9 +443,7 @@ class QuantumApp(ctk.CTk):
         self.mode_label.grid(row=1, column=0, padx=20, pady=(5, 0))
 
         self.mode_selector = ctk.CTkSegmentedButton(
-            self.sidebar, 
-            values=["BB84 Симуляция", "Планирование сетей"],
-            command=self.toggle_mode
+            self.sidebar, values=["BB84 Симуляция", "Планирование сетей"], command=self.toggle_mode
         )
         self.mode_selector.grid(row=2, column=0, padx=20, pady=5)
         self.mode_selector.set("BB84 Симуляция")
@@ -431,31 +455,42 @@ class QuantumApp(ctk.CTk):
         self.bits_label = ctk.CTkLabel(self.bb84_frame, text="Количество кубитов:", anchor="w")
         self.bits_label.pack(anchor="w", padx=10, pady=(5, 0))
 
-        self.bits_value_label = ctk.CTkLabel(self.bb84_frame, text="64", font=ctk.CTkFont(size=14, weight="bold"), text_color="#3b8ed0")
+        self.bits_value_label = ctk.CTkLabel(
+            self.bb84_frame, text="64", font=ctk.CTkFont(size=14, weight="bold"), text_color="#3b8ed0"
+        )
         self.bits_value_label.pack(anchor="w", padx=10)
 
-        self.bits_slider = ctk.CTkSlider(self.bb84_frame, from_=16, to=200, number_of_steps=23, command=self.update_slider_label)
+        self.bits_slider = ctk.CTkSlider(
+            self.bb84_frame, from_=16, to=200, number_of_steps=23, command=self.update_slider_label
+        )
         self.bits_slider.pack(fill="x", padx=10, pady=5)
         self.bits_slider.set(64)
 
         self.noise_label = ctk.CTkLabel(self.bb84_frame, text="Уровень шума канала (QBER-шум):", anchor="w")
         self.noise_label.pack(anchor="w", padx=10, pady=(5, 0))
 
-        self.noise_value_label = ctk.CTkLabel(self.bb84_frame, text="3%", font=ctk.CTkFont(size=14, weight="bold"), text_color="#3b8ed0")
+        self.noise_value_label = ctk.CTkLabel(
+            self.bb84_frame, text="3%", font=ctk.CTkFont(size=14, weight="bold"), text_color="#3b8ed0"
+        )
         self.noise_value_label.pack(anchor="w", padx=10)
 
-        self.noise_slider = ctk.CTkSlider(self.bb84_frame, from_=0, to=30, number_of_steps=30, command=self.update_noise_label)
+        self.noise_slider = ctk.CTkSlider(
+            self.bb84_frame, from_=0, to=30, number_of_steps=30, command=self.update_noise_label
+        )
         self.noise_slider.pack(fill="x", padx=10, pady=5)
         self.noise_slider.set(3)
 
         self.attack_label = ctk.CTkLabel(self.bb84_frame, text="Стратегия подслушивания Евы:", anchor="w")
         self.attack_label.pack(anchor="w", padx=10, pady=(5, 0))
 
-        self.attack_combobox = ctk.CTkOptionMenu(self.bb84_frame, values=[
-            "Стандартный перехват-повтор",
-            "Перехват под углом 22.5°",
-            "Атака с квантовой памятью"
-        ])
+        self.attack_combobox = ctk.CTkOptionMenu(
+            self.bb84_frame,
+            values=[
+                "Стандартный перехват-повтор",
+                "Перехват под углом 22.5°",
+                "Атака с квантовой памятью",
+            ],
+        )
         self.attack_combobox.pack(fill="x", padx=10, pady=5)
         self.attack_combobox.set("Стандартный перехват-повтор")
 
@@ -464,7 +499,7 @@ class QuantumApp(ctk.CTk):
 
         # --- СЕКЦИЯ 2: Параметры планирования квантовых сетей ---
         self.planner_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        
+
         self.len_label = ctk.CTkLabel(self.planner_frame, text="Длина ВОЛС L (км):", anchor="w")
         self.len_label.pack(anchor="w", padx=10, pady=(5, 0))
         self.len_entry = ctk.CTkEntry(self.planner_frame)
@@ -496,10 +531,17 @@ class QuantumApp(ctk.CTk):
         self.freq_entry.pack(fill="x", padx=10, pady=2)
 
         # Кнопки действий
-        self.run_button = ctk.CTkButton(self.sidebar, text="ЗАПУСТИТЬ РАСЧЕТ", command=self.start_simulation_thread, font=ctk.CTkFont(weight="bold"))
+        self.run_button = ctk.CTkButton(
+            self.sidebar,
+            text="ЗАПУСТИТЬ РАСЧЕТ",
+            command=self.start_simulation_thread,
+            font=ctk.CTkFont(weight="bold"),
+        )
         self.run_button.grid(row=5, column=0, padx=20, pady=10)
 
-        self.clear_button = ctk.CTkButton(self.sidebar, text="Очистить логи", fg_color="transparent", border_width=2, command=self.clear_logs)
+        self.clear_button = ctk.CTkButton(
+            self.sidebar, text="Очистить логи", fg_color="transparent", border_width=2, command=self.clear_logs
+        )
         self.clear_button.grid(row=6, column=0, padx=20, pady=5)
 
         self.disclaimer_label = ctk.CTkLabel(
@@ -507,14 +549,16 @@ class QuantumApp(ctk.CTk):
             text="Модель объединяет квантовые вентили BB84 с физической моделью ВОЛС, детекторами SPAD/SNSPD и пределом PLOB.",
             font=ctk.CTkFont(size=9, slant="italic"),
             text_color="#ffae42",
-            wraplength=270)
+            wraplength=270,
+        )
         self.disclaimer_label.grid(row=7, column=0, padx=20, pady=10)
 
         self.author_label = ctk.CTkLabel(
             self.sidebar,
             text="© 2026 Roman Maksimov\nНаучный рецензент: д.ф.-м.н. А.Б. Михалычев\nИнститут физики НАН Беларуси",
             font=ctk.CTkFont(size=10, slant="italic"),
-            text_color="gray")
+            text_color="gray",
+        )
         self.author_label.grid(row=8, column=0, padx=20, pady=(15, 10), sticky="s")
 
         # Главная область вывода
@@ -528,9 +572,15 @@ class QuantumApp(ctk.CTk):
         self.metrics_frame.grid(row=0, column=0, sticky="ew", pady=(0, 20))
         self.metrics_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-        self.qber_card  = self.create_metric_card(self.metrics_frame, "QBER (Оценка)", "0.00", 0)
-        self.status_card = self.create_metric_card(self.metrics_frame, "Статус канала", "Ожидание", 1)
-        self.key_len_card = self.create_metric_card(self.metrics_frame, "Длина / Скорость (SKR)", "0", 2)
+        self.qber_title_label, self.qber_card = self.create_metric_card(
+            self.metrics_frame, "QBER (Оценка)", "0.00", 0
+        )
+        self.status_title_label, self.status_card = self.create_metric_card(
+            self.metrics_frame, "Статус канала", "Ожидание", 1
+        )
+        self.key_len_title_label, self.key_len_card = self.create_metric_card(
+            self.metrics_frame, "Длина секретного ключа", "0", 2
+        )
 
         # Лог-терминал
         self.textbox = ctk.CTkTextbox(self.main_content, font=ctk.CTkFont(family="Consolas", size=12))
@@ -541,12 +591,12 @@ class QuantumApp(ctk.CTk):
             self.planner_frame.grid_forget()
             self.bb84_frame.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
             self.run_button.configure(text="ЗАПУСТИТЬ ПРОТОКОЛ")
-            self.key_len_card.master.winfo_children()[2].winfo_children()[0].configure(text="Длина секретного ключа")
+            self.key_len_title_label.configure(text="Длина секретного ключа")
         else:
             self.bb84_frame.grid_forget()
             self.planner_frame.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
             self.run_button.configure(text="РАССЧИТАТЬ СЕТЬ QKD")
-            self.key_len_card.master.winfo_children()[2].winfo_children()[0].configure(text="Скорость SKR (бит/с)")
+            self.key_len_title_label.configure(text="Скорость SKR (бит/с)")
 
     def update_slider_label(self, value):
         self.bits_value_label.configure(text=str(int(value)))
@@ -561,14 +611,16 @@ class QuantumApp(ctk.CTk):
         t_label.pack(pady=(5, 0))
         v_label = ctk.CTkLabel(frame, text=value, font=ctk.CTkFont(size=18, weight="bold"))
         v_label.pack(pady=(0, 5))
-        return v_label
+        return t_label, v_label
 
     def log(self, message):
-        self.after(0, lambda: self._safe_log(message))
+        if self.winfo_exists():
+            self.after(0, lambda: self._safe_log(message))
 
     def _safe_log(self, message):
-        self.textbox.insert("end", f"{message}\n")
-        self.textbox.see("end")
+        if self.winfo_exists() and hasattr(self, "textbox"):
+            self.textbox.insert("end", f"{message}\n")
+            self.textbox.see("end")
 
     def clear_logs(self):
         self.textbox.delete("1.0", "end")
@@ -598,13 +650,19 @@ class QuantumApp(ctk.CTk):
 
             self.log("=== РЕЖИМ ПЛАНИРОВАНИЯ И АНАЛИЗА СЕТЕЙ QKD ===")
             self.log(f"Параметры линии: Длина L = {distance_km} км | Затухание alpha = {attenuation_db} дБ/км")
-            self.log(f"Детектор (SPAD/SNSPD): Эффективность eta = {det_efficiency*100:.1f}% | Темновой отсчет P_dark = {dark_count_rate}")
+            self.log(
+                f"Детектор (SPAD/SNSPD): Эффективность eta = {det_efficiency*100:.1f}% | Темновой отсчет P_dark = {dark_count_rate}"
+            )
             self.log(f"Квантовый излучатель: Частота f = {freq_mhz} МГц\n")
 
             # Расчет физических параметров
             trans = calculate_fiber_transmission(distance_km, attenuation_db)
-            qber_phys, snr, p_click = calculate_physical_qber(distance_km, attenuation_db, det_efficiency, dark_count_rate)
-            skr, _, _, net_fraction = calculate_secret_key_rate(distance_km, repetition_rate_hz, attenuation_db, det_efficiency, dark_count_rate)
+            qber_phys, snr, p_click = calculate_physical_qber(
+                distance_km, attenuation_db, det_efficiency, dark_count_rate
+            )
+            skr, _, _, net_fraction = calculate_secret_key_rate(
+                distance_km, repetition_rate_hz, attenuation_db, det_efficiency, dark_count_rate
+            )
 
             self.log(f"1. Пропускание волокна T:          {trans:.6f} ({10*np.log10(trans):.2f} дБ затухания)")
             self.log(f"2. Соотношение сигнал/шум (SNR):   {snr:.2f}")
@@ -616,7 +674,12 @@ class QuantumApp(ctk.CTk):
             self.after(0, lambda: self.update_ui_results(qber_phys, f"{skr/1000.0:.1f} кбит/с", status_text))
 
             # Построение графического анализа в отдельном окне
-            self.after(0, lambda: self.show_planner_plots(attenuation_db, det_efficiency, dark_count_rate, repetition_rate_hz, distance_km))
+            self.after(
+                0,
+                lambda: self.show_planner_plots(
+                    attenuation_db, det_efficiency, dark_count_rate, repetition_rate_hz, distance_km
+                ),
+            )
 
         except Exception as e:
             self.log(f"ОШИБКА ПЛАНИРОВАНИЯ СЕТИ: {str(e)}")
@@ -641,30 +704,30 @@ class QuantumApp(ctk.CTk):
                 T = calculate_fiber_transmission(d, alpha)
                 # Предел Пирандолы-Лоренцани-Оттавиани-Бэйнса (PLOB bound)
                 plob_bound = -np.log2(1.0 - T) * f_hz * 0.5 if T < 1.0 else 0
-                
-                skr_list.append(s / 1000.0) # кбит/с
+
+                skr_list.append(s / 1000.0)  # кбит/с
                 qber_list.append(q * 100.0)
                 plob_list.append(plob_bound / 1000.0)
 
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
 
             # График 1: Скорость генерации ключа SKR
-            ax1.plot(distances, skr_list, 'b-', label='Расчетная SKR (кбит/с)', linewidth=2)
-            ax1.plot(distances, plob_list, 'k--', label='Теоретический предел PLOB', alpha=0.6)
-            ax1.axvline(x=current_L, color='r', linestyle=':', label=f'Текущая дистанция L={current_L}км')
-            ax1.set_yscale('log')
-            ax1.set_ylabel('SKR (кбит/с) [Лог-масштаб]')
-            ax1.set_title('Скорость передачи секретного ключа (SKR) vs Длина ВОЛС')
+            ax1.plot(distances, skr_list, "b-", label="Расчетная SKR (кбит/с)", linewidth=2)
+            ax1.plot(distances, plob_list, "k--", label="Теоретический предел PLOB", alpha=0.6)
+            ax1.axvline(x=current_L, color="r", linestyle=":", label=f"Текущая дистанция L={current_L}км")
+            ax1.set_yscale("log")
+            ax1.set_ylabel("SKR (кбит/с) [Лог-масштаб]")
+            ax1.set_title("Скорость передачи секретного ключа (SKR) vs Длина ВОЛС")
             ax1.grid(True, which="both", ls="--", alpha=0.5)
             ax1.legend()
 
             # График 2: QBER vs Дистанция
-            ax2.plot(distances, qber_list, 'r-', label='Физический QBER (%)', linewidth=2)
-            ax2.axhline(y=11.0, color='g', linestyle='--', label='Порог Шора-Прескилла (11%)')
-            ax2.axvline(x=current_L, color='r', linestyle=':')
-            ax2.set_xlabel('Длина оптического волокна L (км)')
-            ax2.set_ylabel('QBER (%)')
-            ax2.set_title('Зависимость уровня ошибок QBER от длины линии связи')
+            ax2.plot(distances, qber_list, "r-", label="Физический QBER (%)", linewidth=2)
+            ax2.axhline(y=11.0, color="g", linestyle="--", label="Порог Шора-Прескилла (11%)")
+            ax2.axvline(x=current_L, color="r", linestyle=":")
+            ax2.set_xlabel("Длина оптического волокна L (км)")
+            ax2.set_ylabel("QBER (%)")
+            ax2.set_title("Зависимость уровня ошибок QBER от длины линии связи")
             ax2.grid(True, ls="--", alpha=0.5)
             ax2.legend()
 
@@ -676,8 +739,10 @@ class QuantumApp(ctk.CTk):
 
             def on_close():
                 plt.close(fig)
-                canvas.get_tk_widget().destroy()
-                plot_window.destroy()
+                if canvas.get_tk_widget().winfo_exists():
+                    canvas.get_tk_widget().destroy()
+                if plot_window.winfo_exists():
+                    plot_window.destroy()
 
             plot_window.protocol("WM_DELETE_WINDOW", on_close)
 
@@ -696,13 +761,15 @@ class QuantumApp(ctk.CTk):
             self.log("           и квантовая информатика' Института физики НАН Беларуси, д.ф.-м.н. А.Б. Михалычев")
             self.log("=" * 85)
 
-            scenario_num  = "2" if introduce_eve else "1"
-            scenario_text = f"С ЕВОЙ (Атака: {attack_strategy})" if introduce_eve else "БЕЗ ЕВЫ (Чистый/зашумленный канал)"
+            scenario_num = "2" if introduce_eve else "1"
+            scenario_text = (
+                f"С ЕВОЙ (Атака: {attack_strategy})" if introduce_eve else "БЕЗ ЕВЫ (Чистый/зашумленный канал)"
+            )
             self.log(f"\n=== СЦЕНАРИЙ {scenario_num}: Квантовый канал {scenario_text} ===")
             self.log(f"--- Параметры: Излучено кубитов: {num_bits} | Аппаратный Шум: {noise_prob*100:.1f}% ---\n")
 
             # 1. Этап Алисы
-            alice_bits  = generate_random_bits(num_bits)
+            alice_bits = generate_random_bits(num_bits)
             alice_bases = generate_random_bases(num_bits)
             self.log(f"[Алиса]: Подготовила биты:    {alice_bits}")
             self.log(f"[Алиса]: Выбрала базисы:      {alice_bases}")
@@ -717,11 +784,11 @@ class QuantumApp(ctk.CTk):
             # 2. Этап перехвата Евы
             eve_measured_bits = np.zeros(num_bits, dtype=int)
             eve_bases = np.zeros(num_bits, dtype=int)
-            
+
             if introduce_eve:
                 qc_to_bob, eve_bases, eve_measured_bits = eavesdrop_on_qubits(alice_circuit, num_bits, attack_strategy)
                 self.log(f"[Ева]: Перехватила кубиты! Использована стратегия: {attack_strategy}")
-                
+
                 if attack_strategy != "Атака с квантовой памятью":
                     self.log(f"[Ева]: Измеренные базисы Евы: {eve_bases}")
                     self.log(f"[Ева]: Результат измерений:    {eve_measured_bits}")
@@ -742,7 +809,8 @@ class QuantumApp(ctk.CTk):
 
             # --- ПОСЛЕ СРАВНЕНИЯ БАЗИСОВ ---
             sifted_alice_key, sifted_bob_key, matching_indices = sift_key(
-                alice_bits, alice_bases, bob_measured_bits, bob_bases)
+                alice_bits, alice_bases, bob_measured_bits, bob_bases
+            )
 
             self.log("\n--- ЭТАП 1: Классическое просеивание (Sifting) ---")
             self.log(f"Совпавшие индексы базисов:  {matching_indices}")
@@ -811,16 +879,24 @@ class QuantumApp(ctk.CTk):
 
                 if final_len > 0:
                     amp_eve_bits, amp_eve_hex, _ = privacy_amplification(
-                        remaining_eve, qber_est=qber_est, leaked_ec_bits=leaked_ec_bits, eve_info_fraction=eve_info_fraction
+                        remaining_eve, qber_est=qber_est, leaked_ec_bits=leaked_ec_bits, eve_info_fraction=eve_info_frac
                     )
-                    eve_final_corr = np.sum(amp_eve_bits == amp_alice_bits) / float(final_len) if len(amp_eve_bits) == final_len else 0.5
-                    self.log(f"2. Сходство ключа Евы ПОСЛЕ универсального хэширования Тёплица: {eve_final_corr*100:.1f}%")
+                    eve_final_corr = (
+                        np.sum(amp_eve_bits == amp_alice_bits) / float(final_len)
+                        if len(amp_eve_bits) == final_len
+                        else 0.5
+                    )
+                    self.log(
+                        f"2. Сходство ключа Евы ПОСЛЕ универсального хэширования Тёплица: {eve_final_corr*100:.1f}%"
+                    )
 
             # --- ВЫВОДЫ ---
             self.log("\n--- АНАЛИТИЧЕСКИЕ ВЫВОДЫ ---")
             if qber_est >= 0.11:
                 status_text = "ОБНАРУЖЕН ВЗЛОМ!"
-                self.log(f"!!! {status_text} QBER ({qber_est*100:.1f}%) выше предела Шора-Прескилла (11%). Ключ СКОМПРОМЕТИРОВАН! !!!")
+                self.log(
+                    f"!!! {status_text} QBER ({qber_est*100:.1f}%) выше предела Шора-Прескилла (11%). Ключ СКОМПРОМЕТИРОВАН! !!!"
+                )
             else:
                 status_text = "БЕЗОПАСНО"
                 self.log(f"✓ {status_text}: QBER ({qber_est*100:.1f}%) в пределах нормы (<11%). Ключ успешно распределен.")
@@ -832,11 +908,14 @@ class QuantumApp(ctk.CTk):
             vis_count = min(4, num_bits)
             vis_qc = QuantumCircuit(vis_count, vis_count)
             for i in range(vis_count):
-                if alice_bits[i] == 1:  vis_qc.x(i)
-                if alice_bases[i] == 1: vis_qc.h(i)
+                if alice_bits[i] == 1:
+                    vis_qc.x(i)
+                if alice_bases[i] == 1:
+                    vis_qc.h(i)
             vis_qc.barrier()
             for i in range(vis_count):
-                if bob_bases[i] == 1: vis_qc.h(i)
+                if bob_bases[i] == 1:
+                    vis_qc.h(i)
                 vis_qc.measure(i, i)
 
             self.after(0, lambda: self.show_plot(vis_qc, vis_count))
@@ -858,10 +937,11 @@ class QuantumApp(ctk.CTk):
             plot_window.after(150, lambda: plot_window.focus())
 
             fig, ax = plt.subplots(figsize=(8, 4))
-            qc.draw(output='mpl', style={'name': 'bw'}, ax=ax)
+            qc.draw(output="mpl", style={"name": "bw"}, ax=ax)
             ax.set_title(
                 f"Визуализация квантовых вентилей (первые {count} кубитов)\n"
-                f"Алиса (Генерация) → Квантовый канал → Боб (Измерение)")
+                f"Алиса (Генерация) → Квантовый канал → Боб (Измерение)"
+            )
             fig.tight_layout()
 
             canvas = FigureCanvasTkAgg(fig, master=plot_window)
@@ -870,8 +950,10 @@ class QuantumApp(ctk.CTk):
 
             def on_close():
                 plt.close(fig)
-                canvas.get_tk_widget().destroy()
-                plot_window.destroy()
+                if canvas.get_tk_widget().winfo_exists():
+                    canvas.get_tk_widget().destroy()
+                if plot_window.winfo_exists():
+                    plot_window.destroy()
 
             plot_window.protocol("WM_DELETE_WINDOW", on_close)
 
@@ -879,6 +961,9 @@ class QuantumApp(ctk.CTk):
             self.log(f"Не удалось отрисовать схему: {e}")
 
     def update_ui_results(self, qber, key_str, status):
+        if not self.winfo_exists():
+            return
+
         self.qber_card.configure(text=f"{qber:.4f}")
         self.key_len_card.configure(text=str(key_str))
 
@@ -888,6 +973,10 @@ class QuantumApp(ctk.CTk):
         else:
             self.qber_card.configure(text_color="#47d147")
             self.status_card.configure(text=status, text_color="#47d147")
+
+    def on_closing(self):
+        plt.close("all")
+        self.destroy()
 
 
 if __name__ == "__main__":
