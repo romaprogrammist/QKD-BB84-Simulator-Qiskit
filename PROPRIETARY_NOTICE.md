@@ -3,7 +3,7 @@
 **Название Проекта:** QKD-BB84-Simulator-Qiskit  
 **© Авторское право (Copyright) 2025–2026, Роман Максимов.**
 ---
-**All right reserved. Roman Maksimov.**
+**All rights reserved. Roman Maksimov.**
 ---
 
 **ВСЕ ПРАВА НА ДАННЫЙ ПРОЕКТ И РЕПОЗИТОРИЙ ЗАЩИЩЕНЫ (ALL RIGHTS RESERVED).**
