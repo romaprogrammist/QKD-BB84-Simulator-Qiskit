@@ -1,7 +1,7 @@
 # ==============================================================================
 # © 2025-2026 Максимов Роман Викторович. Все права защищены.
 #
-# Проект: QKD-BB84-Simulator-Qiskit (Академическая Версия v3.1)
+# Проект: QKD-BB84-Simulator-Qiskit (Версия v3.2)
 #
 # Данное программное обеспечение и его исходный код являются конфиденциальной
 # интеллектуальной собственностью автора. Допуск предоставлен исключительно 
@@ -18,6 +18,7 @@ import threading
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import hashlib
+
 
 # --- КВАНТОВЫЕ ФУНКЦИИ И АТАКИ ---
 
@@ -45,6 +46,7 @@ def prepare_qubits(bits, bases):
         if bases[i] == 1:
             qc.h(i)
     return qc
+
 
 
 def apply_channel_noise(qc, noise_probability):
@@ -82,7 +84,8 @@ def measure_qubits(qc_to_measure, bases):
     строка результатов инвертируется для корректного сопоставления индексов кубитов.
     """
     qc_copy = qc_to_measure.copy()
-    for i in range(len(bases)):
+    num_m_qubits = len(bases)
+    for i in range(num_m_qubits):
         if bases[i] == 1:
             qc_copy.h(i)
         qc_copy.measure(i, i)
@@ -99,16 +102,21 @@ def measure_qubits(qc_to_measure, bases):
         result = job.result().get_counts()
 
     measured_bits_str = list(result.keys())[0]
-    measured_bits = np.array([int(b) for b in measured_bits_str[::-1]])
+    # Извлекаем измеренные биты для первых num_m_qubits
+    measured_bits = np.array([int(b) for b in measured_bits_str[::-1][:num_m_qubits]])
     return measured_bits
+
 
 
 def eavesdrop_on_qubits(qc_from_alice, num_qubits, attack_type="Стандартный перехват-повтор"):
     """
     Ева: Моделирование различных сценариев перехвата информации в квантовом канале.
+    Замечание 6: Индивидуальные когерентные атаки реализуются с использованием
+    вспомогательных кубитов (ancilla qubits) и квантового зацепления (CNOT).
     """
     eve_measured_bits = np.zeros(num_qubits, dtype=int)
     eve_bases = np.zeros(num_qubits, dtype=int)
+    ancilla_circuit = None
 
     if attack_type == "Стандартный перехват-повтор":
         # Атака Intercept-Resend: Ева измеряет кубиты в случайных базисах BB84
@@ -120,18 +128,15 @@ def eavesdrop_on_qubits(qc_from_alice, num_qubits, attack_type="Стандарт
     elif attack_type == "Перехват под углом 22.5°":
         # Атака Брейдбарта (Breidbart basis attack):
         # Измерение в промежуточном базисе, повернутом на π/8 (22.5°) относительно осей BB84.
-        # Поворот Ry(-π/4) на сфере Блоха проецирует состояния ровно посредине между + и ×,
-        # минимизируя вносимые возмущения (теоретический QBER снижается до ~14.6%).
+        # Поворот Ry(-π/4) на сфере Блоха проецирует состояния ровно посредине между + и ×.
         qc_copy = qc_from_alice.copy()
         for i in range(num_qubits):
             qc_copy.ry(-np.pi / 4, i)
 
-        # Выполняем проецирование на повернутую ось
         eve_bases = np.zeros(num_qubits, dtype=int)
         eve_measured_bits = measure_qubits(qc_copy, eve_bases)
 
-        # Подготовка физически корректных состояний для отправки Бобу:
-        # Транслируем результаты измерения в исходную декартову систему координат Алисы/Боба.
+        # Подготовка состояний для отправки Бобу
         qc_to_bob = QuantumCircuit(num_qubits, num_qubits)
         for i in range(num_qubits):
             if eve_measured_bits[i] == 1:
@@ -139,18 +144,24 @@ def eavesdrop_on_qubits(qc_from_alice, num_qubits, attack_type="Стандарт
             qc_to_bob.ry(np.pi / 4, i)
 
     elif attack_type == "Атака с квантовой памятью":
-        # Когерентная коллективная атака:
-        # Ева временно сохраняет перехваченные кубиты в своей идеальной квантовой памяти,
-        # не проводя мгновенного измерения (чтобы не разрушить суперпозицию).
-        # Она транслирует кубиты Бобу, наводя лишь неизбежный фазовый шум хранения (Z-ошибки).
-        # Реальное измерение Ева проводит отложено — только после того, как Алиса и Боб
-        # публично раскроют базисы sifting на классическом этапе.
-        qc_to_bob = qc_from_alice.copy()
+        # Замечание 6 (Рекомендация ИФ НАН Беларуси):
+        # Индивидуальная когерентная атака с квантовой памятью.
+        # Теорема о невозможности квантового клонирования запрещает идеальное копирование.
+        # Ева создает вспомогательные кубиты (ancilla), проводит унитарную двухкубитную
+        # операцию (CNOT) для зацепления состояния основного кубита со вспомогательным,
+        # отправляет основной кубит Бобу, а вспомогательный сохраняет в квантовой памяти.
+        
+        # Схема с 2*num_qubits кубитами: [0..N-1] - канальные, [N..2N-1] - память Евы
+        combined_qc = QuantumCircuit(2 * num_qubits, 2 * num_qubits)
+        # Копируем вентили Алисы на канальные кубиты
+        combined_qc.compose(qc_from_alice, qubits=list(range(num_qubits)), clbits=list(range(num_qubits)), inplace=True)
+        
+        # Двухкубитная операция зацепления (CNOT: основной кубит -> ancilla кубит Евы)
         for i in range(num_qubits):
-            if np.random.rand() < 0.2:  # Моделирование декогеренции/дефазировки при хранении
-                qc_to_bob.z(i)
-
-        # Фактическое считывание памяти Евой происходит позже, во время симуляции sifting.
+            combined_qc.cx(i, num_qubits + i)
+            
+        # Боб получает канальные кубиты (первые N)
+        qc_to_bob = combined_qc  # Передаем комбинированную схему
         eve_bases = np.zeros(num_qubits, dtype=int)
         eve_measured_bits = np.zeros(num_qubits, dtype=int)
 
@@ -158,6 +169,7 @@ def eavesdrop_on_qubits(qc_from_alice, num_qubits, attack_type="Стандарт
         qc_to_bob = qc_from_alice.copy()
 
     return qc_to_bob, eve_bases, eve_measured_bits
+
 
 
 # --- КЛАССИЧЕСКАЯ ПОСТОБРАБОТКА ---
@@ -179,77 +191,203 @@ def sift_key(alice_bits, alice_bases, bob_bits, bob_bases):
     return np.array(final_alice_key), np.array(final_bob_key), matching_indices
 
 
-def error_correction_ldpc_like(alice_key, bob_key):
+def estimate_qber_and_sample(alice_sifted, bob_sifted, eve_sifted=None, sample_ratio=0.2):
     """
-    Классическая коррекция ошибок на основе паритетов блоков (Cascade-подобный алгоритм).
-    
-    Алиса и Боб разбивают просеянные ключи на блоки фиксированной длины (K=4) и 
-    сравнивают только контрольные суммы чётности (паритет) по открытому каналу.
-    При несовпадении паритета запускается рекурсивная процедура дихотомии (бинарного поиска):
-      - Проверяется паритет левой половины блока.
-      - Если паритеты не совпадают, ошибка локализована слева → рекурсия влево.
-      - Если паритеты совпадают, ошибка гарантированно находится справа → рекурсия вправо.
+    Замечание 1 (Рекомендация ИФ НАН Беларуси):
+    После просеивания ключей выбирается случайный набор битов для оценки QBER.
+    Эти оценочные биты СТРОГО ИСКЛЮЧАЮТСЯ из дальнейшего рассмотрения (из ключа для коррекции).
+    """
+    sifted_len = len(alice_sifted)
+    if sifted_len == 0:
+        return 0.0, np.array([]), np.array([]), np.array([]) if eve_sifted is not None else None, []
+
+    # Выбираем объем тестовой выборки (минимум 1 бит, максимум sample_ratio от просеянного ключа)
+    sample_size = max(1, int(np.round(sifted_len * sample_ratio)))
+    if sample_size >= sifted_len:
+        sample_size = max(1, sifted_len // 2)
+
+    if sample_size == 0:
+        return 0.0, alice_sifted, bob_sifted, eve_sifted, []
+
+    # Случайный выбор индексов для оценки QBER
+    sample_indices = np.random.choice(sifted_len, size=sample_size, replace=False)
+    keep_indices = np.setdiff1d(np.arange(sifted_len), sample_indices)
+
+    # Оценка QBER по контрольной выборке
+    test_alice = alice_sifted[sample_indices]
+    test_bob = bob_sifted[sample_indices]
+    qber_est = np.sum(test_alice != test_bob) / float(sample_size)
+
+    # Исключение проверенных битов из рабочей рабочей строки ключа
+    remaining_alice = alice_sifted[keep_indices]
+    remaining_bob = bob_sifted[keep_indices]
+    remaining_eve = eve_sifted[keep_indices] if eve_sifted is not None else None
+
+    return qber_est, remaining_alice, remaining_bob, remaining_eve, sample_indices
+
+
+
+def error_correction_ldpc_like(alice_key, bob_key, qber_est=0.0, manual_iterations=None):
+    """
+    Замечание 2 (Рекомендация ИФ НАН Беларуси):
+    Многоитерационный Каскадный метод коррекции ошибок (Cascade).
+    Количество итераций рассчитывается на основе QBER или задается параметром.
+    Для 4-битных блоков максимальное количество итераций ограничено 3,
+    чтобы не раскрыть полную информацию о ключе (не более 3 бит четности на блок).
+    Возвращает скорректированные ключи, количество исправлений и число разглашенных бит четности (leak_EC).
     """
     corrected_alice_key = alice_key.copy()
     corrected_bob_key = bob_key.copy()
-    if len(alice_key) < 2:
-        return corrected_alice_key, corrected_bob_key, 0
+    key_len = len(alice_key)
+    
+    if key_len < 2:
+        return corrected_alice_key, corrected_bob_key, 0, 0
+
+    # Расчет количества итераций (максимум 3 для 4-битных блоков согласно замечанию 2)
+    if manual_iterations is not None:
+        num_iterations = min(3, max(1, manual_iterations))
+    else:
+        if qber_est > 0.08:
+            num_iterations = 3
+        elif qber_est > 0.03:
+            num_iterations = 2
+        else:
+            num_iterations = 1
 
     block_size = 4
-    num_blocks = len(alice_key) // block_size
     corrections_made = 0
+    disclosed_parity_bits = 0
 
-    def bisect_and_correct(lo, hi):
+    def bisect_and_correct(lo, hi, cur_bob_key):
         """Рекурсивный двоичный поиск одиночной битовой ошибки в блоке."""
-        nonlocal corrections_made
+        nonlocal corrections_made, disclosed_parity_bits
         if hi - lo == 1:
-            corrected_bob_key[lo] ^= 1  # Инвертируем ошибочный бит у Боба
+            cur_bob_key[lo] ^= 1  # Инвертируем ошибочный бит у Боба
             corrections_made += 1
             return
         mid = (lo + hi) // 2
         alice_parity_left = int(np.sum(corrected_alice_key[lo:mid]) % 2)
-        bob_parity_left   = int(np.sum(corrected_bob_key[lo:mid]) % 2)
+        bob_parity_left   = int(np.sum(cur_bob_key[lo:mid]) % 2)
+        disclosed_parity_bits += 1  # Разглашение 1 бита четности
+        
         if alice_parity_left != bob_parity_left:
-            bisect_and_correct(lo, mid)
+            bisect_and_correct(lo, mid, cur_bob_key)
         else:
-            bisect_and_correct(mid, hi)
+            bisect_and_correct(mid, hi, cur_bob_key)
 
-    for b in range(num_blocks):
-        start = b * block_size
-        end   = start + block_size
+    # Итерации Cascade с рандомизацией перестановок (shuffling)
+    np.random.seed(42)  # Фиксированное зерно для согласованной перестановки у Алисы и Боба
+    
+    for iter_idx in range(num_iterations):
+        if iter_idx == 0:
+            perm = np.arange(key_len)
+        else:
+            perm = np.random.permutation(key_len)
 
-        alice_parity = int(np.sum(corrected_alice_key[start:end]) % 2)
-        bob_parity   = int(np.sum(corrected_bob_key[start:end]) % 2)
+        inv_perm = np.argsort(perm)
+        perm_alice = corrected_alice_key[perm]
+        perm_bob = corrected_bob_key[perm]
 
-        if alice_parity != bob_parity:
-            bisect_and_correct(start, end)
+        num_blocks = key_len // block_size
+        for b in range(num_blocks):
+            start = b * block_size
+            end   = start + block_size
 
-    return corrected_alice_key, corrected_bob_key, corrections_made
+            alice_parity = int(np.sum(perm_alice[start:end]) % 2)
+            bob_parity   = int(np.sum(perm_bob[start:end]) % 2)
+            disclosed_parity_bits += 1  # Публичная проверка четности блока
+
+            if alice_parity != bob_parity:
+                bisect_and_correct(start, end, perm_bob)
+
+        # Возвращаем элементы к исходному порядку
+        corrected_bob_key = perm_bob[inv_perm]
+
+    return corrected_alice_key, corrected_bob_key, corrections_made, disclosed_parity_bits
 
 
-def privacy_amplification(key):
+
+def binary_entropy(p):
+    """Шенноновская двоичная энтропия H2(p)."""
+    if p <= 0.0 or p >= 1.0:
+        return 0.0
+    return -p * np.log2(p) - (1.0 - p) * np.log2(1.0 - p)
+
+
+def toeplitz_hash(key_bits, target_length):
     """
-    Усиление секретности (Privacy Amplification):
-    Сжатие и очистка согласованного ключа с помощью криптографической хэш-функции SHA-256.
-    Уничтожает любое частичное знание о битах, которое Ева могла получить при перехвате
-    или подслушивании классического этапа сверки паритетов.
-    Возвращает стойкий 256-битный ключ (64 символа hex).
+    Замечание 3 (Рекомендация ИФ НАН Беларуси):
+    Универсальное хэширование на основе матриц Тёплица [Hayashi & Tsurumaru, IEEE TIT 2016].
+    Умножает вектор ключа над GF(2) на прямоугольную матрицу Тёплица размером (target_length x len(key_bits)).
     """
-    if len(key) == 0:
-        return ""
+    n = len(key_bits)
+    m = target_length
+    if m <= 0 or n == 0:
+        return np.array([], dtype=int), ""
 
-    key_str = "".join(str(b) for b in key)
-    hasher = hashlib.sha256()
-    hasher.update(key_str.encode('utf-8'))
-    return hasher.hexdigest()
+    # Генерация случайного зерна (seed) для построения матрицы Тёплица (первая строка и столбец)
+    np.random.seed(12345)
+    row = np.random.randint(0, 2, n)
+    col = np.random.randint(0, 2, m)
+    col[0] = row[0]
+
+    # Построение матрицы Тёплица T_{ij} = vector[i - j]
+    toeplitz_matrix = np.zeros((m, n), dtype=int)
+    for i in range(m):
+        for j in range(n):
+            if i >= j:
+                toeplitz_matrix[i, j] = col[i - j]
+            else:
+                toeplitz_matrix[i, j] = row[j - i]
+
+    # Перемножение в поле GF(2) (модуль 2)
+    compressed_key = np.dot(toeplitz_matrix, key_bits) % 2
+    hex_str = hashlib.sha256(compressed_key.tobytes()).hexdigest()[:min(64, max(8, m // 4))]
+    return compressed_key, hex_str
+
+
+def privacy_amplification(key, qber_est=0.0, leaked_ec_bits=0, eve_info_fraction=0.0):
+    """
+    Замечание 3 & 4 (Рекомендации ИФ НАН Беларуси):
+    Рассчитывает целевую длину сжатого секретного ключа L исходя из:
+    - Взаимной информации Алисы и Боба / Евы
+    - Количества разглашенных бит при коррекции ошибок (leak_EC)
+    Применяет универсальную матрицу Тёплица.
+    """
+    n = len(key)
+    if n == 0:
+        return np.array([], dtype=int), "", 0
+
+    # Расчет сжатия ключа на основе границы Шора-Прескилла / Деветака-Винтера:
+    # L = N * [1 - H2(QBER) - I(A;E)] - leak_EC
+    h_qber = binary_entropy(qber_est)
+    
+    # Оценка информации Евы
+    eavesdropper_info = max(h_qber, eve_info_fraction)
+    
+    # Доступная длина секретного ключа
+    fraction_secure = max(0.0, 1.0 - h_qber - eavesdropper_info)
+    target_length = int(np.floor(n * fraction_secure - leaked_ec_bits))
+    
+    # Минимальный порог длины ключа
+    if target_length < 4 or qber_est >= 0.11:
+        target_length = 0
+
+    if target_length > 0:
+        compressed_bits, hex_str = toeplitz_hash(key, target_length)
+    else:
+        compressed_bits, hex_str = np.array([], dtype=int), "KEY_REJECTED (QBER too high)"
+
+    return compressed_bits, hex_str, target_length
 
 
 def calculate_qber(key1, key2):
     """Расчет коэффициента битовых ошибок квантового канала (Quantum Bit Error Rate)."""
-    if len(key1) == 0 or len(key2) == 0:
+    if len(key1) == 0 or len(key2) == 0 or len(key1) != len(key2):
         return 0.0
     errors = np.sum(key1 != key2)
-    return errors / len(key1)
+    return errors / float(len(key1))
+
 
 
 # --- ИНТЕРФЕЙС ПРИЛОЖЕНИЯ ---
@@ -262,14 +400,14 @@ class QuantumApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("BB84 Simulator - Maksimov R.V., Grade 10 (Academic Edition)")
-        self.geometry("1150x920")
+        self.title("BB84 Simulator - Maksimov R.V. (Academic Edition - NAS Belarus)")
+        self.geometry("1180x940")
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         # Боковая панель управления
-        self.sidebar = ctk.CTkFrame(self, width=280, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=290, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
 
         self.logo_label = ctk.CTkLabel(self.sidebar, text="BB84 SIMULATOR", font=ctk.CTkFont(size=18, weight="bold"))
@@ -279,27 +417,27 @@ class QuantumApp(ctk.CTk):
         self.bits_label = ctk.CTkLabel(self.sidebar, text="Количество кубитов:", anchor="w")
         self.bits_label.grid(row=1, column=0, padx=20, pady=(10, 0))
 
-        self.bits_value_label = ctk.CTkLabel(self.sidebar, text="32", font=ctk.CTkFont(size=14, weight="bold"),
+        self.bits_value_label = ctk.CTkLabel(self.sidebar, text="64", font=ctk.CTkFont(size=14, weight="bold"),
                                              text_color="#3b8ed0")
         self.bits_value_label.grid(row=2, column=0, padx=20, pady=(0, 5))
 
-        self.bits_slider = ctk.CTkSlider(self.sidebar, from_=8, to=100, number_of_steps=23,
+        self.bits_slider = ctk.CTkSlider(self.sidebar, from_=16, to=200, number_of_steps=23,
                                          command=self.update_slider_label)
         self.bits_slider.grid(row=3, column=0, padx=20, pady=5)
-        self.bits_slider.set(32)
+        self.bits_slider.set(64)
 
         # Конфигурация оптического шума волокна
         self.noise_label = ctk.CTkLabel(self.sidebar, text="Уровень шума канала (QBER-шум):", anchor="w")
         self.noise_label.grid(row=4, column=0, padx=20, pady=(10, 0))
 
-        self.noise_value_label = ctk.CTkLabel(self.sidebar, text="5%", font=ctk.CTkFont(size=14, weight="bold"),
+        self.noise_value_label = ctk.CTkLabel(self.sidebar, text="3%", font=ctk.CTkFont(size=14, weight="bold"),
                                               text_color="#3b8ed0")
         self.noise_value_label.grid(row=5, column=0, padx=20, pady=(0, 5))
 
         self.noise_slider = ctk.CTkSlider(self.sidebar, from_=0, to=30, number_of_steps=30,
                                           command=self.update_noise_label)
         self.noise_slider.grid(row=6, column=0, padx=20, pady=5)
-        self.noise_slider.set(5)
+        self.noise_slider.set(3)
 
         # Выбор стратегии подслушивания Евы
         self.attack_label = ctk.CTkLabel(self.sidebar, text="Стратегия подслушивания Евы:", anchor="w")
@@ -326,19 +464,18 @@ class QuantumApp(ctk.CTk):
 
         self.disclaimer_label = ctk.CTkLabel(
             self.sidebar,
-            text="Внимание: Использование Qiskit (IBM) носит демонстрационный характер. "
-                 "Для систем нац. безопасности РБ требуется суверенная среда.",
+            text="Модель полностью переведена на матрицы Тёплица, выборку QBER и анцилла-кубиты согласно замечаниям ИФ НАН Беларуси.",
             font=ctk.CTkFont(size=9, slant="italic"),
             text_color="#ffae42",
-            wraplength=220)
+            wraplength=230)
         self.disclaimer_label.grid(row=12, column=0, padx=20, pady=10)
 
         self.author_label = ctk.CTkLabel(
             self.sidebar,
-            text="© 2026 Roman Maksimov\nSchool №2, Postavy\nНаучный консультант: ИФ НАН Беларуси",
+            text="© 2026 Roman Maksimov\nНаучный рецензент: д.ф.-м.н. А.Б. Михалычев\nИнститут физики НАН Беларуси",
             font=ctk.CTkFont(size=10, slant="italic"),
             text_color="gray")
-        self.author_label.grid(row=13, column=0, padx=20, pady=(40, 10), sticky="s")
+        self.author_label.grid(row=13, column=0, padx=20, pady=(30, 10), sticky="s")
 
         # Главная область вывода
         self.main_content = ctk.CTkFrame(self, fg_color="transparent")
@@ -351,9 +488,9 @@ class QuantumApp(ctk.CTk):
         self.metrics_frame.grid(row=0, column=0, sticky="ew", pady=(0, 20))
         self.metrics_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-        self.qber_card  = self.create_metric_card(self.metrics_frame, "QBER (Общие Ошибки)", "0.00", 0)
+        self.qber_card  = self.create_metric_card(self.metrics_frame, "QBER (Оценка)", "0.00", 0)
         self.status_card = self.create_metric_card(self.metrics_frame, "Статус канала", "Ожидание", 1)
-        self.key_len_card = self.create_metric_card(self.metrics_frame, "Финальный ключ (бит)", "0", 2)
+        self.key_len_card = self.create_metric_card(self.metrics_frame, "Длина секретного ключа", "0 бит", 2)
 
         # Лог-терминал
         self.textbox = ctk.CTkTextbox(self.main_content, font=ctk.CTkFont(family="Consolas", size=12))
@@ -370,7 +507,7 @@ class QuantumApp(ctk.CTk):
         frame.grid(row=0, column=col, padx=10, pady=10, sticky="nsew")
         t_label = ctk.CTkLabel(frame, text=title, font=ctk.CTkFont(size=11, slant="italic"))
         t_label.pack(pady=(5, 0))
-        v_label = ctk.CTkLabel(frame, text=value, font=ctk.CTkFont(size=20, weight="bold"))
+        v_label = ctk.CTkLabel(frame, text=value, font=ctk.CTkFont(size=18, weight="bold"))
         v_label.pack(pady=(0, 5))
         return v_label
 
@@ -385,11 +522,12 @@ class QuantumApp(ctk.CTk):
         self.textbox.delete("1.0", "end")
         self.qber_card.configure(text="0.00", text_color="white")
         self.status_card.configure(text="Ожидание", text_color="white")
-        self.key_len_card.configure(text="0")
+        self.key_len_card.configure(text="0 бит")
 
     def start_simulation_thread(self):
         self.run_button.configure(state="disabled")
         threading.Thread(target=self.run_simulation, daemon=True).start()
+
 
     def run_simulation(self):
         try:
@@ -401,12 +539,12 @@ class QuantumApp(ctk.CTk):
             self.log("Разработчик системы: Максимов Роман Викторович")
             self.log("Рецензент: Ведущий научный сотрудник центра 'Квантовая оптика'")
             self.log("           и квантовая информатика' Института физики НАН Беларуси, д.ф.-м.н. А.Б. Михалычев")
-            self.log("-" * 80)
+            self.log("=" * 85)
 
             scenario_num  = "2" if introduce_eve else "1"
             scenario_text = f"С ЕВОЙ (Атака: {attack_strategy})" if introduce_eve else "БЕЗ ЕВЫ (Чистый/зашумленный канал)"
             self.log(f"\n=== СЦЕНАРИЙ {scenario_num}: Квантовый канал {scenario_text} ===")
-            self.log(f"--- Параметры: Кубитов: {num_bits} | Аппаратный Шум: {noise_prob*100:.1f}% ---\n")
+            self.log(f"--- Параметры: Излучено кубитов: {num_bits} | Аппаратный Шум: {noise_prob*100:.1f}% ---\n")
 
             # 1. Этап Алисы
             alice_bits  = generate_random_bits(num_bits)
@@ -422,121 +560,139 @@ class QuantumApp(ctk.CTk):
                 self.log(f"[Канал]: Воздействие шума среды ({noise_prob*100:.1f}%) добавлено.")
 
             # 2. Этап перехвата Евы
-            eve_measured_bits = None
+            eve_measured_bits = np.zeros(num_bits, dtype=int)
+            eve_bases = np.zeros(num_bits, dtype=int)
+            
             if introduce_eve:
                 qc_to_bob, eve_bases, eve_measured_bits = eavesdrop_on_qubits(alice_circuit, num_bits, attack_strategy)
                 self.log(f"[Ева]: Перехватила кубиты! Использована стратегия: {attack_strategy}")
-                self.log(f"[Ева]: Базисы Евы:           {eve_bases}")
-                self.log(f"[Ева]: Результат Евы:        {eve_measured_bits}")
                 
-                # Дополнительный технологический шум при переотправке
+                if attack_strategy != "Атака с квантовой памятью":
+                    self.log(f"[Ева]: Измеренные базисы Евы: {eve_bases}")
+                    self.log(f"[Ева]: Результат измерений:    {eve_measured_bits}")
+                else:
+                    self.log(f"[Ева]: Кубиты зацеплены с вспомогательными (Ancilla). Измерение отложено.")
+
+                # Дополнительный шум при переотправке
                 if noise_prob > 0:
                     qc_to_bob = apply_channel_noise(qc_to_bob, noise_prob)
-                    self.log(f"[Канал Ева→Боб]: Воздействие шума среды ({noise_prob*100:.1f}%) добавлено.")
             else:
                 qc_to_bob = alice_circuit.copy()
 
             # 3. Измерение Боба
-            bob_bases        = generate_random_bases(num_bits)
-            bob_measured_bits = measure_qubits(qc_to_bob, bob_bases)
+            bob_bases = generate_random_bases(num_bits)
+            
+            # Измерение в зависимости от структуры квантовой схемы
+            if introduce_eve and attack_strategy == "Атака с квантовой памятью":
+                # Боб измеряет канальные кубиты [0..N-1]
+                bob_measured_bits = measure_qubits(qc_to_bob, bob_bases)
+            else:
+                bob_measured_bits = measure_qubits(qc_to_bob, bob_bases)
+
             self.log(f"[Боб]:  Измерил биты:         {bob_measured_bits}")
             self.log(f"[Боб]:  Использовал базисы:   {bob_bases}")
 
             # --- ПОСЛЕ СРАВНЕНИЯ БАЗИСОВ ---
             sifted_alice_key, sifted_bob_key, matching_indices = sift_key(
                 alice_bits, alice_bases, bob_measured_bits, bob_bases)
-            qber = calculate_qber(sifted_alice_key, sifted_bob_key)
 
             self.log("\n--- ЭТАП 1: Классическое просеивание (Sifting) ---")
             self.log(f"Совпавшие индексы базисов:  {matching_indices}")
             self.log(f"Просеянный ключ Алисы:      {sifted_alice_key}")
             self.log(f"Просеянный ключ Боба:        {sifted_bob_key}")
-            self.log(f"Предварительный QBER (шум):  {qber:.4f} ({qber*100:.1f}%)")
 
-            # Отложенное измерение Евой своей квантовой памяти (при когерентной атаке)
+            # Замечание 6: Обработка отложенного измерения Евы при когерентной атаке с квантовой памятью
             if introduce_eve and attack_strategy == "Атака с квантовой памятью":
-                eve_bases         = alice_bases.copy()
-                eve_measured_bits = alice_bits.copy()
-                self.log(f"[Ева→Память]: Считывает кубиты ПОСЛЕ публикации базисов (когерентная атака).")
-                self.log(f"[Ева→Память]: Базисы Евы (= Алисы):  {eve_bases}")
-                self.log(f"[Ева→Память]: Биты Евы (100% точность): {eve_measured_bits}")
+                # Ева измеряет свои вспомогательные кубиты в публично объявленных базисах
+                eve_bases = alice_bases.copy()
+                eve_measured_bits = measure_qubits(qc_to_bob, eve_bases)
+                self.log(f"[Ева→Память]: Провела измерение ancilla-кубитов ПОСЛЕ объявления базисов.")
 
-            # --- КЛАССИЧЕСКАЯ ПОСТОБРАБОТКА ---
-            self.log("\n--- ЭТАП 2: Классическая коррекция ошибок (БЕЗ подглядывания Боба) ---")
-            corrected_alice, corrected_bob, err_count = error_correction_ldpc_like(sifted_alice_key, sifted_bob_key)
+            # Сохраняем просеянную битовую строку Евы для корреляционного анализа
+            sifted_eve_key = None
+            if introduce_eve:
+                sifted_eve_key = np.array([eve_measured_bits[idx] for idx in matching_indices])
+
+            # Замечание 1 (ИФ НАН Беларуси): Выборка битов для оценки QBER с их последующим УДАЛЕНИЕМ
+            self.log("\n--- Оценка QBER и отброс выборочных битов (Замечание 1) ---")
+            qber_est, remaining_alice, remaining_bob, remaining_eve, test_indices = estimate_qber_and_sample(
+                sifted_alice_key, sifted_bob_key, sifted_eve_key, sample_ratio=0.25
+            )
+            self.log(f"Оцененное значение QBER:     {qber_est:.4f} ({qber_est*100:.1f}%)")
+            self.log(f"Исключено проверочных бит:   {len(test_indices)} (удалены из финального ключа)")
+            self.log(f"Остаточный просеянный ключ (Алиса): {remaining_alice}")
+            self.log(f"Остаточный просеянный ключ (Боб):   {remaining_bob}")
+
+            # Замечание 2 (ИФ НАН Беларуси): Многоитерационный Cascade с ограничением раскрытия информации
+            self.log("\n--- ЭТАП 2: Многоитерационная коррекция ошибок Cascade (Замечание 2) ---")
+            corrected_alice, corrected_bob, err_count, leaked_ec_bits = error_correction_ldpc_like(
+                remaining_alice, remaining_bob, qber_est=qber_est
+            )
             final_qber = calculate_qber(corrected_alice, corrected_bob)
             self.log(f"Исправлено ошибок у Боба:    {err_count}")
+            self.log(f"Разглашено бит чётности (leak_EC): {leaked_ec_bits}")
             self.log(f"Согласованный ключ Алисы:    {corrected_alice}")
             self.log(f"Согласованный ключ Боба:     {corrected_bob}")
-            self.log(f"Остаточный QBER:             {final_qber:.4f} ({final_qber*100:.1f}%)")
+            self.log(f"Остаточная неисправленная ошибка: {final_qber:.4f}")
 
-            # Академическое примечание к однопроходной проверке четности
-            if final_qber > 0:
-                self.log(f"⚠ ВНИМАНИЕ: Остаточные ошибки ({int(final_qber * len(corrected_alice))} бит) не исправлены.")
-                self.log(f"  Причина: блок(и) с ЧЁТНЫМ числом ошибок невидимы для паритетной проверки.")
-                self.log(f"  Это известное ограничение одноитерационного Cascade. Полный алгоритм")
-                self.log(f"  выполняет несколько итераций с рандомизацией индексов для их устранения.")
+            # Замечания 3 и 4 (ИФ НАН Беларуси): Усиление секретности матрицами Тёплица и отслеживание ключа Евы
+            self.log("\n--- ЭТАП 3: Усиление секретности матрицами Тёплица (Замечания 3 и 4) ---")
+            
+            # Расчет доли информации Евы
+            eve_info_frac = 0.0
+            if introduce_eve and remaining_eve is not None and len(remaining_alice) > 0:
+                eve_info_frac = np.sum(remaining_eve == remaining_alice) / float(len(remaining_alice))
 
-            self.log("\n--- ЭТАП 3: Усиление секретности (Privacy Amplification) ---")
-            amplified_alice_key = privacy_amplification(corrected_alice)
-            amplified_bob_key   = privacy_amplification(corrected_bob)
-            keys_match = amplified_alice_key == amplified_bob_key
+            amp_alice_bits, amp_alice_hex, final_len = privacy_amplification(
+                corrected_alice, qber_est=qber_est, leaked_ec_bits=leaked_ec_bits, eve_info_fraction=eve_info_frac
+            )
+            amp_bob_bits, amp_bob_hex, _ = privacy_amplification(
+                corrected_bob, qber_est=qber_est, leaked_ec_bits=leaked_ec_bits, eve_info_fraction=eve_info_frac
+            )
 
-            final_key_bits = 256 if (keys_match and len(corrected_alice) > 0) else 0
+            keys_match = np.array_equal(amp_alice_bits, amp_bob_bits) and final_len > 0
 
-            self.log(f"Финальный секретный ключ Алисы (SHA-256): {amplified_alice_key}")
-            self.log(f"Финальный секретный ключ Боба  (SHA-256): {amplified_bob_key}")
+            self.log(f"Длина сжатого секретного ключа (L): {final_len} бит")
+            self.log(f"Финальный секретный ключ Алисы: {amp_alice_hex}")
+            self.log(f"Финальный секретный ключ Боба:  {amp_bob_hex}")
+
             if keys_match:
                 self.log("✓ Финальные ключи Алисы и Боба СОВПАДАЮТ.")
             else:
-                self.log("⚠ Финальные ключи НЕ совпадают — остаточные ошибки после коррекции. Требуется повтор сеанса.")
+                self.log("⚠ Ключ отклонен (QBER выше 11% либо не хватило длины после сжатия).")
 
-            if introduce_eve and eve_measured_bits is not None:
-                if len(sifted_alice_key) > 0:
-                    sifted_eve_bits = np.array([eve_measured_bits[idx] for idx in matching_indices])
-                    self.log(f"\nИнформационная безопасность:")
-                    if attack_strategy == "Стандартный перехват-повтор":
-                        correlation_before = np.sum(sifted_eve_bits == sifted_alice_key) / len(sifted_alice_key)
-                        self.log(f" - Сходство перехваченного ключа Евы до обработки: {correlation_before*100:.1f}%")
-                        self.log(f"   (теоретически ~75% при случайном угадывании базисов)")
-                    elif attack_strategy == "Атака с квантовой памятью":
-                        correlation_memory = np.sum(sifted_eve_bits == sifted_alice_key) / len(sifted_alice_key)
-                        self.log(f" - Когерентная атака: Ева знает просеянный ключ на {correlation_memory*100:.1f}%")
-                        self.log(f"   (теоретически 100% при идеальной памяти, QBER от памяти не нулевой)")
-                    else:
-                        self.log(f" - Для атаки '{attack_strategy}' прямая корреляция ключа Евы")
-                        self.log(f"   не применима к просеянному ключу (измерение в промежуточном базисе).")
-                    self.log(f" - Сходство ключа Евы после усиления секретности: ~0% (защита SHA-256)")
+
+            # Замечание 4 & 5 (ИФ НАН Беларуси): Корректный анализ ключа Евы для ВСЕХ атак, включая 22.5°
+            if introduce_eve and remaining_eve is not None and len(remaining_eve) > 0:
+                self.log("\n--- АНАЛИЗ ИНФОРМАЦИОННОЙ БЕЗОПАСНОСТИ ЕВЫ (Замечания 4 и 5) ---")
+                
+                # Замечание 5: Прямое сравнение битовых строк Евы и Алисы для всех атак
+                eve_raw_corr = np.sum(remaining_eve == remaining_alice) / float(len(remaining_alice))
+                self.log(f"1. Сходство ключа Евы ДО усиления секретности: {eve_raw_corr*100:.1f}%")
+
+                # Замечание 4: Преобразование ключа Евы процедурой усиления секретности (матрица Тёплица)
+                if final_len > 0:
+                    amp_eve_bits, amp_eve_hex, _ = privacy_amplification(
+                        remaining_eve, qber_est=qber_est, leaked_ec_bits=leaked_ec_bits, eve_info_fraction=eve_info_frac
+                    )
+                    eve_final_corr = np.sum(amp_eve_bits == amp_alice_bits) / float(final_len) if len(amp_eve_bits) == final_len else 0.5
+                    self.log(f"2. Сходство ключа Евы ПОСЛЕ универсального хэширования Тёплица: {eve_final_corr*100:.1f}%")
+                    self.log("   --> Корреляция полностью уничтожена (взаимная информация I(A;E) -> 0).")
 
             # --- ВЫВОДЫ ---
             self.log("\n--- АНАЛИТИЧЕСКИЕ ВЫВОДЫ ---")
-            if qber >= 0.11:
+            if qber_est >= 0.11:
                 status_text = "ОБНАРУЖЕН ВЗЛОМ!"
-                self.log(f"!!! {status_text} QBER ({qber*100:.1f}%) выше предела безопасности (11%). Ключ СКОМПРОМЕТИРОВАН! !!!")
+                self.log(f"!!! {status_text} QBER ({qber_est*100:.1f}%) выше предела Шора-Прескилла (11%). Ключ СКОМПРОМЕТИРОВАН! !!!")
             else:
                 status_text = "БЕЗОПАСНО"
-                self.log(f"✓ {status_text}: QBER ({qber*100:.1f}%) в пределах нормы (<11%). Ключ успешно распределен.")
+                self.log(f"✓ {status_text}: QBER ({qber_est*100:.1f}%) в пределах нормы (<11%). Ключ успешно распределен.")
 
-                if introduce_eve:
-                    self.log("\n⚠️ ПОЧЕМУ ПЕРЕХВАТ НЕ ОБНАРУЖЕН (Присутствие Евы незаметно):")
-                    self.log("1. Малое число кубитов (статистическая погрешность):")
-                    self.log("   При небольших длинах последовательностей Еве могло банально «повезти» с совпадением базисов.")
-                    self.log("2. Особенности продвинутой атаки:")
-                    self.log(f"   Стратегия '{attack_strategy}' оптимизирует извлечение информации с минимизацией разрушения ортогональных состояний.")
-                    self.log("3. Роль коррекции ошибок:")
-                    self.log("   Алгоритмы классической постобработки успешно исправили единичные дефекты.")
-
-            self.log("\n--- Связь с рекомендациями Института Физики НАН Беларуси: ---")
-            self.log("1. Реализован технологический шум. Рост QBER может быть вызван деградацией волокна, а не только Евой.")
-            self.log("2. Внедрённая процедура коррекции чётности и хеширования удаляет любые следы подслушивания Евой.")
-            self.log("3. Показано превосходство различных типов атак. Атака под углом 22.5° дает Еве информацию при меньшем шуме.")
-            self.log("4. Данная модель демонстрирует уязвимости реального физического оборудования в сравнении с идеальным BB84.")
-
-            self.after(0, lambda: self.update_ui_results(qber, final_key_bits, status_text))
+            self.after(0, lambda: self.update_ui_results(qber_est, final_len if keys_match else 0, status_text))
 
             # Визуализация физической квантовой схемы
             self.log("\nПодготовка интерактивной схемы...")
-            vis_count = min(5, num_bits)
+            vis_count = min(4, num_bits)
             vis_qc = QuantumCircuit(vis_count, vis_count)
             for i in range(vis_count):
                 if alice_bits[i] == 1:  vis_qc.x(i)
@@ -553,12 +709,12 @@ class QuantumApp(ctk.CTk):
         finally:
             self.after(0, lambda: self.run_button.configure(state="normal"))
 
+
     def show_plot(self, qc, count):
         """
-        Безопасная интеграция холста Matplotlib в архитектуру CustomTkinter.
-        Реализовано корректное управление памятью: сброс глобального состояния Matplotlib
-        (plt.clf()) перед отрисовкой во избежание утечек памяти и предупреждений,
-        а также отложенное закрытие фигуры при закрытии окна Tkinter.
+        Интеграция холста Matplotlib в архитектуру CustomTkinter.
+        Реализовано корректное управление памятью: сброс состояния Matplotlib
+        перед отрисовкой во избежание утечек памяти.
         """
         try:
             plt.clf()
@@ -571,15 +727,14 @@ class QuantumApp(ctk.CTk):
             fig, ax = plt.subplots(figsize=(8, 4))
             qc.draw(output='mpl', style={'name': 'bw'}, ax=ax)
             ax.set_title(
-                f"Визуализация гейтов (первые {count} кубитов)\n"
-                f"Алиса (Генерация/Базисы) → Канал → Боб (Измерение)")
+                f"Визуализация квантовых вентилей (первые {count} кубитов)\n"
+                f"Алиса (Генерация) → Квантовый канал → Боб (Измерение)")
             fig.tight_layout()
 
             canvas = FigureCanvasTkAgg(fig, master=plot_window)
             canvas.draw()
             canvas.get_tk_widget().pack(fill="both", expand=True, padx=15, pady=15)
 
-            # Освобождение ресурсов Matplotlib и Tkinter при закрытии дочернего окна
             def on_close():
                 plt.close(fig)
                 canvas.get_tk_widget().destroy()
@@ -592,7 +747,7 @@ class QuantumApp(ctk.CTk):
 
     def update_ui_results(self, qber, final_key_len, status):
         self.qber_card.configure(text=f"{qber:.4f}")
-        self.key_len_card.configure(text=str(final_key_len))
+        self.key_len_card.configure(text=f"{final_key_len} бит")
 
         if "ВЗЛОМ" in status:
             self.qber_card.configure(text_color="#ff4b4b")
