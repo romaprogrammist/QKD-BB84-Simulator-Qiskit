@@ -432,7 +432,7 @@ $$I_{\text{Eve}} \leq N \cdot 2 H_2(\text{QBER})$$
 ## 📄 Лицензия
 
 ```
-All right reserved. 2025-2026 Roman Maksimov (Максимов Роман Викторович)
+All rights reserved. 2025-2026 Roman Maksimov (Максимов Роман Викторович)
 
 Полный текст лицензии и условия использования см. в файле PROPRIETARY_NOTICE.md
 ```
