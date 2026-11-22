@@ -1,17 +1,11 @@
-# ==============================================================================
-# © 2025-2026 Максимов Роман Викторович. Все права защищены.
+# QKD-BB84-Simulator-Qiskit
+# Copyright (C) 2025-2026 Roman Maksimov
 #
-# © 2025-2026 Maksimov Roman Viktorovich. All rights reserved.
-#
-# Проект: QKD-BB84-Simulator-Qiskit (Версия v3.5)
-#
-# Данное программное обеспечение и его исходный код являются конфиденциальной
-# интеллектуальной собственностью автора. Допуск предоставлен исключительно 
-# для личного визуального ознакомления и оценки проекта. Любое 
-# несанкционированное копирование, распространение, модификация или 
-# использование в научных/коммерческих целях запрещены.
-# Подробные условия использования изложены в файле LICENSE.
-# ==============================================================================
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
 import os
 import json
 import csv
