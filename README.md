@@ -414,10 +414,14 @@ $$I_{\text{Eve}} \leq N \cdot 2 H_2(\text{QBER})$$
 
 ## 🚫 Условия Использования (Proprietary Notice)
 
-Данный исходный код является **частной и конфиденциальной интеллектуальной собственностью** автора (Роман Максимов). 
+QKD-BB84-Simulator-Qiskit
+Copyright (C) 2025-2026 Roman Maksimov
 
-- **Разрешено:** Ознакомление с кодом, проведение академического аудита и запуск симуляций в рамках оценки проекта.
-- **Запрещено:** Публичное перераспространение, копирование в сторонние репозитории, модификация и коммерческое использование без письменного разрешения автора.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
 
 ## 📞 Контакты и Поддержка
 
